@@ -1,19 +1,30 @@
 import asyncio
 from geo_lite_client import GeoLiteClient
 from ip_info_client import IpinfoClient
+from ripe_measurement_parser import RipeMeasurementParser
 
 
 async def main():
-    async with IpinfoClient() as ipinfo, \
-               GeoLiteClient() as geolite:
 
-        ip = "8.8.8.8"
+    ripe_parser = RipeMeasurementParser("data/RIPE-Atlas-measurement-128134459.json")
+    measurements = ripe_parser.parse_measurements()
 
-        ipinfo_data = await ipinfo.lookup(ip)
-        print("ipinfo:", ipinfo_data)
+    async with IpinfoClient() as ipinfo, GeoLiteClient() as geolite:
+        for measurement in measurements:
+            for trace in measurement["traceroute"]:
+                ip = trace["from"]
+                if ip == "*" or ip is None:
+                    trace["ipinfo"] = None
+                    trace["geolite"] = None
+                    continue
+                ipinfo_data = await ipinfo.lookup(ip)
+                geolite_data = await geolite.city(ip)
+                trace["ipinfo"] = ipinfo_data
+                trace["geolite"] = geolite_data
 
-        geolite_data = await geolite.city(ip)
-        print("geolite:", geolite_data)
+        # Example: print the first measurement with enriched traceroute
+        if measurements:
+            print(measurements[0])
 
 
 if __name__ == "__main__":
