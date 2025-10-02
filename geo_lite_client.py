@@ -12,6 +12,11 @@ class GeoLiteClient:
     """
     def __init__(self, account_id: str = GEO_LITE_ACCOUNT_ID, license_key: str = GEO_LITE_LICENSE_KEY,
                  base_url: str = GEO_LITE_BASE_URL, timeout: float = 8.0):
+        
+        base_url = os.getenv("GEO_LITE_BASE_URL")
+        account_id = os.getenv("GEO_LITE_ACCOUNT_ID")
+        license_key = os.getenv("GEO_LITE_LICENSE_KEY") ## put this in env for security
+        
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             auth=(account_id, license_key),
