@@ -1,2 +1,6 @@
 # requirements.txt
 httpx>=0.27.0
+fastapi
+uvicorn
+python-multipart
+python-dotenv

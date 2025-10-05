@@ -77,3 +77,10 @@ async def get_african_probes():
     service = RipeAtlasService()
     probes = await service.get_probes_from_Africa()
     return {"probes": probes}
+
+
+@app.get("/initiate_measurement")
+async def initiate_measurement():
+    service = RipeAtlasService()
+    result = await service.create_measurement()
+    return {"result": result}

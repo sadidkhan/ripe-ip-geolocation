@@ -6,6 +6,8 @@ RIPE_ATLAS_BASE_URL = os.getenv("RIPE_ATLAS_BASE_URL", "https://atlas.ripe.net/a
 RIPE_ATLAS_API_KEY = os.getenv("RIPE_ATLAS_API_KEY")  # store securely in env
 
 class RipeAtlasClient:
+
+    
     """HTTPS client for RIPE Atlas API with API key auth."""
 
     def __init__(self, api_key: str = RIPE_ATLAS_API_KEY, base_url: str = RIPE_ATLAS_BASE_URL, timeout: float = 10.0):
@@ -27,6 +29,13 @@ class RipeAtlasClient:
             for probe in data.get("results", []):
                 yield probe
             url = data.get("next")
+
+    
+    async def create_measurement(self, measurement_data: dict = None):
+        resp = await self._client.post("/measurements/", json=measurement_data)
+        resp.raise_for_status()
+        return resp.json()
+
 
     async def aclose(self): await self._client.aclose()
     async def __aenter__(self): return self
