@@ -31,10 +31,15 @@ class RipeAtlasClient:
             url = data.get("next")
 
     
-    async def create_measurement(self, measurement_data: dict = None):
-        resp = await self._client.post("/measurements/", json=measurement_data)
-        resp.raise_for_status()
-        return resp.json()
+    async def create_measurement(self, target, measurement_data: dict = None):
+        try:
+            resp = await self._client.post("/measurements/", json=measurement_data)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            print(f"Error while creating measurement for {target}: error: {e}")
+            return None
+    
 
 
     async def aclose(self): await self._client.aclose()

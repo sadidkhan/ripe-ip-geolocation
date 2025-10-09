@@ -93,6 +93,3 @@ def get_anycast_ips():
         ips = get_ips_from_fsdb()
         write_ip_list_to_csv(ips, csv_path)
         return ips
-    
-
-get_anycast_ips()
