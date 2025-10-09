@@ -1,5 +1,12 @@
 from ripe_atlas_client import RipeAtlasClient
 
+AFRICAN_COUNTRIES: frozenset[str] = frozenset({
+    "DZ","AO","BJ","BW","BF","BI","CM","CV","CF","TD","KM",
+    "CD","CG","CI","DJ","EG","GQ","ER","SZ","ET","GA","GM",
+    "GH","GN","GW","KE","LS","LR","LY","MG","MW","ML","MR",
+    "MU","MA","MZ","NA","NE","NG","RW","ST","SN","SC","SL",
+    "SO","ZA","SS","SD","TZ","TG","TN","UG","ZM","ZW"
+})
 
 class RipeAtlasService:
 
@@ -8,31 +15,22 @@ class RipeAtlasService:
         self.__probes = []
 
 
-    async def get_probes_from_Africa(self):
-        probes = await self.get_probes()
-        return self.filter_african_probes()
-
-
-    async def get_probes(self):
+    async def fetch_all_probes(self):
+        probes = []
         async with RipeAtlasClient() as client:
             async for probe in client.get_probes():
-                self.__probes.append(probe)
-            return {"probes": self.__probes}
+                probes.append(probe)
+        return probes
     
 
     def filter_african_probes(self):
-        african_countries = {
-            "DZ", "AO", "BJ", "BW", "BF", "BI", "CM", "CV", "CF", "TD", "KM",
-            "CD", "CG", "CI", "DJ", "EG", "GQ", "ER", "SZ", "ET", "GA", "GM",
-            "GH", "GN", "GW", "KE", "LS", "LR", "LY", "MG", "MW", "ML", "MR",
-            "MU", "MA", "MZ", "NA", "NE", "NG", "RW", "ST", "SN", "SC", "SL",
-            "SO", "ZA", "SS", "SD", "TZ", "TG", "TN", "UG", "ZM", "ZW"
-        }
-        return [probe for probe in self.__probes if probe.get("country_code") in african_countries]
+        return [probe for probe in self.__probes if probe.get("country_code") in AFRICAN_COUNTRIES]
     
     
-    def filter_probes_by_country(self, country_code):
-        return [probe for probe in self.__probes if probe.get("country_code") == country_code]
+    async def get_probes_from_Africa(self):
+        if not self.__probes:
+            self.__probes = await self.fetch_all_probes()
+        return self.filter_african_probes()
     
     
     async def create_measurement(self):
