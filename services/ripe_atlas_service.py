@@ -1,8 +1,14 @@
+import asyncio
+import time
 from anycast_ip_collection import get_anycast_ips
 from ripe_atlas_client import RipeAtlasClient
 from typing import Literal
 import os
 import csv
+from utility import read_fetched_ping_msm_result, read_measurements, save_fetched_ping_msm_result, write_failed_msm_target, write_single_msm_id
+
+import logging
+logger = logging.getLogger("ripe_atlas")
 
 
 AFRICAN_COUNTRIES: frozenset[str] = frozenset({
@@ -66,24 +72,24 @@ class RipeAtlasService:
         return probes
     
     
-    def write_single_msm_id(self, target: str, msm_id: int, path: str = "data/measurements/measurements.csv"):
-        if msm_id is None:
-            return
+    # def write_single_msm_id(self, target: str, msm_id: int, path: str = "data/measurements/measurements.csv"):
+    #     if msm_id is None:
+    #         return
         
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        new_file = not os.path.exists(path)
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if new_file:
-                w.writerow(["target", "measurement_id"])
-            w.writerow([target, msm_id])
+    #     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    #     new_file = not os.path.exists(path)
+    #     with open(path, "a", newline="", encoding="utf-8") as f:
+    #         w = csv.writer(f)
+    #         if new_file:
+    #             w.writerow(["target", "measurement_id"])
+    #         w.writerow([target, msm_id])
 
     
     async def create_measurement(self, target, probes, type: Literal["ping", "traceroute"] = "ping"):
         if not probes:
             raise ValueError("No probes available to create a measurement.")
 
-        ids = [probe["id"] for probe in probes[:2]]  # Example: first 2 probes
+        ids = [probe["id"] for probe in probes]  # Example: all probes
         value_str = ",".join(map(str, ids))
 
         measurement_data = {
@@ -118,15 +124,93 @@ class RipeAtlasService:
         targets = get_anycast_ips()
         probes = await self.get_probes()
         probes_from_africa = self.filter_african_probes(probes)
+
+        done_already = read_measurements("data/measurements/measurements.csv")
+        counter = 0
         for target in targets:
+            if target in done_already:
+                continue
             try:
+                counter += 1
                 measurements = await self.create_measurement(target, probes_from_africa, type="ping")
                 msm_id = measurements[0] if measurements else None
                 if msm_id:
-                    self.write_single_msm_id(target, msm_id)
+                    write_single_msm_id(target, msm_id)
+                
+                if(counter == 50):
+                    await asyncio.sleep(120)  # Pause for 120 seconds (2 minutes)
+                    counter = 0
 
             except Exception as e:
+                write_failed_msm_target(target, str(e))
                 print(f"Error creating measurement for {target}: {e}")
+                await asyncio.sleep(120)  # Pause before next attempt
+    
+
+    async def process_ping_msm_results(self):
+        results = []
+        async for data in self.get_msm_ping_results():
+            if data:
+                results.append(data)
+                save_fetched_ping_msm_result(data)
+
+    
+    async def get_msm_ping_results_batch(self, batch_size: int = 10):
+        done_already = read_measurements("data/measurements/measurements.csv")
+        msm_ids = list(done_already.values())
+
+        results = []
+        async with RipeAtlasClient() as client:
+            for i in range(0, len(msm_ids), batch_size):
+                batch = msm_ids[i:i + batch_size]
+
+                tasks = [client.get_measurement(int(msm_id)) for msm_id in batch]
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Keep successes, log failures
+                for msm_id, res in zip(batch, batch_results):
+                    if isinstance(res, Exception):
+                        print(f"⚠️ measurement {msm_id} failed: {res}")
+                    else:
+                        results.append(res)
+
+                # Optional small pause to be nice to the API
+                await asyncio.sleep(10)
+
+        return results
+    
+
+    async def get_msm_ping_results(self):
+        done_already = read_measurements("data/measurements/measurements.csv")
+        msm_ids = list(done_already.values())
+        already_fetched_msm = read_fetched_ping_msm_result("data/measurements/ping_result_fixed3.csv")
+
+        counter = 0
+        for msm_id in msm_ids:
+            if int(msm_id) in already_fetched_msm:
+                logger.info(f"Skipping already fetched measurement ID: {msm_id}")
+                continue
+
+            logger.info(f"Fetching results for measurement ID: {msm_id}")
+            async with RipeAtlasClient() as client:
+                response = await client.get_measurement(msm_id)
+                yield response
+            counter += 1
+            # if counter % 10 == 0:
+            #     await asyncio.sleep(10)
+
+    async def get_msm_ping_result_by_id(self, id):
+        async with RipeAtlasClient() as client:
+            response = await client.get_measurement(id)
+            return response
+
+
+    
+
+
+    
+        
+        
             
 
     async def close(self):

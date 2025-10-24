@@ -5,6 +5,9 @@ import httpx
 RIPE_ATLAS_BASE_URL = os.getenv("RIPE_ATLAS_BASE_URL", "https://atlas.ripe.net/api/v2/")
 RIPE_ATLAS_API_KEY = os.getenv("RIPE_ATLAS_API_KEY")  # store securely in env
 
+import logging
+logger = logging.getLogger("ripe_atlas")
+
 class RipeAtlasClient:
 
     
@@ -37,8 +40,19 @@ class RipeAtlasClient:
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as e:
-            print(f"Error while creating measurement for {target}: error: {e}")
+            logger.error(f"Error while creating measurement for {target}: error: {e}")
             return None
+        
+    
+    async def get_measurement(self, id):
+        try:
+            resp = await self._client.get(f"/measurements/{id}/results/")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Error while fetching measurement {id}: error: {e}")
+            logger.error(f"details: {e.response.content}")
+            return []
     
 
 
