@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import tempfile
 from geo_lite_client import GeoLiteClient
 from ip_info_client import IpinfoClient
+from logging_config import setup_logger
 from ripe_atlas_client import RipeAtlasClient
 from ripe_measurement_parser import RipeMeasurementParser
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ load_dotenv()
 # from ip_info_client import IpinfoClient
 # from geo_lite_client import GeoLiteClient
 
+logger = setup_logger()
 app = FastAPI()
 
 # Frontend origin(s)
@@ -77,4 +79,11 @@ async def upload_measurement(file: UploadFile = File(...)):
 async def initiate_measurement():
     service = RipeAtlasService()
     result = await service.initiate_measurement()
+    return {"result": result}
+
+
+@app.get("/process_measurement_results")
+async def process_measurement_results():
+    service = RipeAtlasService()
+    result = await service.process_ping_msm_results()
     return {"result": result}
