@@ -95,7 +95,7 @@ def write_ip_list_to_csv(ip_list, filename):
             writer.writerow([ip])
 
 def get_anycast_ips():
-    csv_path = "data/anycast/anycast_ip_list1.csv"
+    csv_path = "data/anycast/anycast_ip_list.csv"
     if os.path.exists(csv_path):
         ips = []
         with open(csv_path, "r", encoding="utf-8") as f:
