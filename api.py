@@ -2,6 +2,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
+from anycast_ip_collection import get_anycast_ips
 from geo_lite_client import GeoLiteClient
 from ip_info_client import IpinfoClient
 from logging_config import setup_logger
@@ -40,6 +41,7 @@ def home():
 
 @app.get("/hello")
 def hello():
+    get_anycast_ips()
     return {"message": "Hello, world!"}
 
 @app.post("/upload")

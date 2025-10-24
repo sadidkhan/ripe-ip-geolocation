@@ -2,6 +2,9 @@ import pandas as pd
 import os
 import csv
 
+import logging
+logger = logging.getLogger("ripe_atlas")
+
 def get_anycast_list(date_str: str = "2025/10/08", param_value: int = 0):
     """
     Fetch and filter anycast IPs from anycast-census CSV for a given date.
@@ -29,23 +32,28 @@ def build_anycast_dict(df):
         value = prefix string (e.g., '1.0.0.0/24')
     """
     anycast_dict = {}
-    for prefix in df["prefix"]:
+
+    for _,row in df.iterrows():
+        prefix = row["prefix"]
+        num_sites = row["number_of_sites"]
         try:
             base = ".".join(prefix.split(".")[:3])
-            anycast_dict[base] = {"prefix": prefix}
-        except Exception:
+            anycast_dict[base] = {"prefix": prefix, "num_sites": num_sites}
+        except Exception as e:
+            logger.error(f"Error processing row {row}: {e}")
             continue
+        
     return anycast_dict
 
 
 # fsdb_reader.py
-def get_ips_from_fsdb(fsdb_path: str = "data/anycast/internet_address_hitlist_it113w-20250827.fsdb"):
+def retrieve_ips_from_fsdb_hitlist(anycast_dict, fsdb_path: str = "data/anycast/internet_address_hitlist_it113w-20250827.fsdb"):
     """
     Reads an FSDB file and returns a list of rows (as lists)
     where the 'score' value is > 0.
     """
-    anycast_df = get_anycast_list(date_str="2025/10/08", param_value=0)
-    anycast_dict = build_anycast_dict(anycast_df)
+    # anycast_df = get_anycast_list(date_str="2025/10/08", param_value=0)
+    # anycast_dict = build_anycast_dict(anycast_df)
 
     result = []
     with open(fsdb_path, "r", encoding="utf-8") as f:
@@ -69,6 +77,12 @@ def get_ips_from_fsdb(fsdb_path: str = "data/anycast/internet_address_hitlist_it
 
     return result
 
+def get_final_anycast_ips(anycast_dict):
+    ips = []
+    for key, val in anycast_dict.items():
+        if "ip" in val:
+            ips.append(val["ip"])
+    return ips
 
 def write_ip_list_to_csv(ip_list, filename):
     """
@@ -81,7 +95,7 @@ def write_ip_list_to_csv(ip_list, filename):
             writer.writerow([ip])
 
 def get_anycast_ips():
-    csv_path = "data/anycast/anycast_ip_list.csv"
+    csv_path = "data/anycast/anycast_ip_list1.csv"
     if os.path.exists(csv_path):
         ips = []
         with open(csv_path, "r", encoding="utf-8") as f:
@@ -90,6 +104,9 @@ def get_anycast_ips():
                 ips.append(row["ip"])
         return ips
     else:
-        ips = get_ips_from_fsdb()
+        anycast_df = get_anycast_list(date_str="2025/10/08", param_value=0)
+        anycast_dict = build_anycast_dict(anycast_df)
+        matched_ips = retrieve_ips_from_fsdb_hitlist(anycast_dict)
+        ips = get_final_anycast_ips(anycast_dict)
         write_ip_list_to_csv(ips, csv_path)
-        return ips
+        return matched_ips
