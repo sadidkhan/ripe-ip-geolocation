@@ -40,8 +40,8 @@ class RipeAtlasClient:
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as e:
-            logger.error(f"Error while creating measurement for {target}: error: {e}")
-            return None
+            logger.error(f"Failed http request to create measurement for {target}: error: {e}")
+            raise e
         
     
     async def get_measurement(self, id):

@@ -85,13 +85,7 @@ class RipeAtlasService:
     #         w.writerow([target, msm_id])
 
     
-    async def create_measurement(self, target, probes, type: Literal["ping", "traceroute"] = "ping"):
-        if not probes:
-            raise ValueError("No probes available to create a measurement.")
-
-        ids = [probe["id"] for probe in probes]  # Example: all probes
-        value_str = ",".join(map(str, ids))
-
+    async def create_measurement(self, target, probes_str, num_of_probes, type: Literal["ping", "traceroute"] = "ping"):
         measurement_data = {
             "definitions": [
                 {
@@ -104,26 +98,33 @@ class RipeAtlasService:
                 ], 
                 "probes": [
                     {
-                        "requested": len(ids),
+                        "requested": num_of_probes,
                         "type": "probes",
-                        "value": value_str,
+                        "value": probes_str,
                         # # modern tag filters:
                         # "tags_include": TAGS_INCLUDE,
                         # "tags_exclude": TAGS_EXCLUDE
                     }
                 ],
             }
-            
-        async with RipeAtlasClient() as client:
-            response = await client.create_measurement(target, measurement_data)
-            return response.get("measurements", [])
-            
-            
-    
+
+        try:
+            async with RipeAtlasClient() as client:
+                response = await client.create_measurement(target, measurement_data)
+                return response.get("measurements", [])
+        except Exception as e:
+            raise e
+
     async def initiate_measurement(self):
         targets = get_anycast_ips()
         probes = await self.get_probes()
         probes_from_africa = self.filter_african_probes(probes)
+
+        if not probes_from_africa:
+            raise ValueError("No african probes available to create a measurement.")
+        
+        ids = [probe["id"] for probe in probes_from_africa]  # Example: all probes
+        probes_value_str = ",".join(map(str, ids))
 
         done_already = read_measurements("data/measurements/measurements.csv")
         counter = 0
@@ -132,19 +133,19 @@ class RipeAtlasService:
                 continue
             try:
                 counter += 1
-                measurements = await self.create_measurement(target, probes_from_africa, type="ping")
+                measurements = await self.create_measurement(target, probes_value_str, len(ids), type="ping")
                 msm_id = measurements[0] if measurements else None
                 if msm_id:
                     write_single_msm_id(target, msm_id)
                 
-                if(counter == 50):
-                    await asyncio.sleep(120)  # Pause for 120 seconds (2 minutes)
+                if(counter == 90):
+                    await asyncio.sleep(300)  # Pause for 300 seconds (5 minutes)
                     counter = 0
 
             except Exception as e:
                 write_failed_msm_target(target, str(e))
                 print(f"Error creating measurement for {target}: {e}")
-                await asyncio.sleep(120)  # Pause before next attempt
+                # await asyncio.sleep(120)  # Pause before next attempt
     
 
     async def process_ping_msm_results(self):
