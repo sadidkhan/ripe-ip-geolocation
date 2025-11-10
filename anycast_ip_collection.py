@@ -3,6 +3,9 @@ import os
 import csv
 
 import logging
+
+from geo_lite_client import GeoLiteClient
+from ip_info_client import IpinfoClient
 logger = logging.getLogger("ripe_atlas")
 
 def get_anycast_list(date_str: str = "2025/10/08", param_value: int = 0):
@@ -84,13 +87,13 @@ def get_final_anycast_ips(anycast_dict):
             ips.append(val["ip"])
     return ips
 
-def write_ip_list_to_csv(ip_list, filename):
+def write_ip_list_to_csv(ip_list, filename, columns=["ip"]):
     """
     Write a list of IPs to a CSV file with a single column 'ip'.
     """
     with open(filename, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["ip"])
+        writer.writerow(columns)
         for ip in ip_list:
             writer.writerow([ip])
 
@@ -110,3 +113,104 @@ def get_anycast_ips():
         ips = get_final_anycast_ips(anycast_dict)
         write_ip_list_to_csv(ips, csv_path)
         return matched_ips
+    
+
+
+async def get_anycast_ip_details():
+   
+    OUTPUT_FILE = "data/anycast/anycast_ip_details.csv"
+    BATCH_SIZE = 10
+    FIELDNAMES = [
+        "ip_address", "asn", "as_name", "as_domain", "as_org",
+        "country_code", "country",
+        "continent", "continent_code"
+    ]
+
+    # ensure dir & figure out header need
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+    header_needed = not (os.path.exists(OUTPUT_FILE) and os.path.getsize(OUTPUT_FILE) > 0)
+
+    ips = get_anycast_ips()
+
+    # read existing IPs (if any) to avoid duplicate lookups/writes
+    existing_ips = set()
+    if not header_needed:
+        with open(OUTPUT_FILE, "r", newline="", encoding="utf-8") as rf:
+            reader = csv.DictReader(rf)
+            for row in reader:
+                ip = row.get("ip_address")
+                if ip:
+                    existing_ips.add(ip)
+
+    new_ips = [ip for ip in ips if ip not in existing_ips]
+    skipped_existing = len(ips) - len(new_ips)
+    if not new_ips:
+        logger.info("Nothing to do: all %d IPs already recorded.", len(ips))
+        return {"seen": len(ips), "skipped_existing": skipped_existing, "written": 0, "errors": 0}
+
+    written = 0
+    errors = 0
+
+    async with IpinfoClient() as ipinfo, GeoLiteClient() as geolite:
+        with open(OUTPUT_FILE, "a", newline="", encoding="utf-8") as wf:
+            writer = csv.DictWriter(wf, fieldnames=FIELDNAMES)
+            if header_needed:
+                writer.writeheader()
+
+            # process in batches
+            for batch_start in range(0, len(new_ips), BATCH_SIZE):
+                batch = new_ips[batch_start: batch_start + BATCH_SIZE]
+                logger.info("Processing batch %d (%d IPs)", batch_start // BATCH_SIZE + 1, len(batch))
+
+                for ip in batch:
+                    try:
+                        ipinfo_data = await ipinfo.lookup(ip)
+                        #geolite_data = await geolite.city(ip)
+
+                        if not ipinfo_data: #or not geolite_data:
+                            logger.warning("Skipping %s: missing data", ip)
+                            errors += 1
+                            continue
+
+                        row = {
+                            "ip_address": ip,
+                            "asn": ipinfo_data.get("asn"),
+                            #"as_num": geolite_data.as_num,
+                            "as_name": ipinfo_data.get("as_name"),
+                            "as_domain": ipinfo_data.get("as_domain"),
+                            #"as_org": geolite_data.as_org,
+                            "country_code": ipinfo_data.get("country_code"),
+                            "country": ipinfo_data.get("country"),
+                            #"registered_country": getattr(geolite_data, "registered_country", None),
+                            #"registered_country_iso": getattr(geolite_data, "registered_country_iso", None),
+                            "continent": ipinfo_data.get("continent"),
+                            "continent_code": ipinfo_data.get("continent_code"),
+                            # "latitude": getattr(geolite_data, "latitude", None),
+                            # "longitude": getattr(geolite_data, "longitude", None),
+                            # "accuracy_radius_km": getattr(geolite_data, "accuracy_radius_km", None),
+                            # "network": geolite_data.network,
+                            # "time_zone": getattr(geolite_data, "time_zone", None),
+                        }
+
+                        try:
+                            writer.writerow(row)
+                            written += 1
+                        except Exception as write_err:
+                            errors += 1
+                            logger.exception("Write error for %s: %s", ip, write_err)
+
+                    except Exception as fetch_err:
+                        errors += 1
+                        logger.exception("Lookup error for %s: %s", ip, fetch_err)
+
+                # persist once per batch
+                try:
+                    wf.flush()
+                    os.fsync(wf.fileno())
+                except Exception as fs_err:
+                    logger.warning("Flush/fsync warning: %s", fs_err)
+
+    logger.info("Done. Seen=%d, Skipped(existing)=%d, Written=%d, Errors=%d",
+                len(ips), skipped_existing, written, errors)
+    return {"seen": len(ips), "skipped_existing": skipped_existing, "written": written, "errors": errors}
+
