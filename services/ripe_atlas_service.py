@@ -71,6 +71,13 @@ class RipeAtlasService:
             self.write_probes_to_csv(probes, "data/ripe/all_active_probes.csv")
         return probes
     
+    async def get_african_probes(self):
+        african_probes = self.read_probes_from_csv("data/ripe/african_active_probes.csv")
+        if not african_probes:
+            probes = await self.get_probes()
+            african_probes = self.filter_african_probes(probes)
+            self.write_probes_to_csv(african_probes, "data/ripe/african_active_probes.csv")
+        return african_probes
     
     # def write_single_msm_id(self, target: str, msm_id: int, path: str = "data/measurements/measurements.csv"):
     #     if msm_id is None:
@@ -117,8 +124,8 @@ class RipeAtlasService:
 
     async def initiate_measurement(self):
         targets = get_anycast_ips()
-        probes = await self.get_probes()
-        probes_from_africa = self.filter_african_probes(probes)
+        #probes = await self.get_probes()
+        probes_from_africa = await self.get_african_probes()
 
         if not probes_from_africa:
             raise ValueError("No african probes available to create a measurement.")
@@ -152,7 +159,7 @@ class RipeAtlasService:
         results = []
         async for data in self.get_msm_ping_results():
             if data:
-                results.append(data)
+                # results.append(data)
                 save_fetched_ping_msm_result(data)
 
     
@@ -194,11 +201,11 @@ class RipeAtlasService:
 
             logger.info(f"Fetching results for measurement ID: {msm_id}")
             async with RipeAtlasClient() as client:
-                response = await client.get_measurement(msm_id)
+                response = await client.get_measurement_result(msm_id)
                 yield response
             counter += 1
-            # if counter % 10 == 0:
-            #     await asyncio.sleep(10)
+            if counter % 10 == 0:
+                await asyncio.sleep(10)
 
     async def get_msm_ping_result_by_id(self, id):
         async with RipeAtlasClient() as client:

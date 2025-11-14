@@ -27,6 +27,7 @@ def write_probes_to_csv(self, probes, csv_path):
 
 
 def read_measurements(file_path):
+    duplicates = []
     measurements = {}
     with open(file_path, mode='r', newline='', encoding='utf-8') as file:
         reader = csv.DictReader(file)
@@ -34,6 +35,8 @@ def read_measurements(file_path):
             target = row.get('target')
             measurement_id = row.get('measurement_id')
             if target and measurement_id:  # ensure both are not empty
+                if target.strip() in measurements:
+                    duplicates.append(target.strip())
                 measurements[target.strip()] = measurement_id.strip()
     return measurements
 

@@ -89,3 +89,10 @@ async def process_measurement_results():
     service = RipeAtlasService()
     result = await service.process_ping_msm_results()
     return {"result": result}
+
+
+@app.get("/get_anycast_ip_details")
+async def get_anycast_ip_details():
+    service = RipeAtlasService()
+    result = await service.get_anycast_ip_details()
+    return {"result": result}

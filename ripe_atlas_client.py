@@ -44,9 +44,19 @@ class RipeAtlasClient:
             raise e
         
     
-    async def get_measurement(self, id):
+    async def get_measurement_result(self, id):
         try:
             resp = await self._client.get(f"/measurements/{id}/results/")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Error while fetching measurement {id}: error: {e}")
+            logger.error(f"details: {e.response.content}")
+            return []
+        
+    async def get_measurement(self, id):
+        try:
+            resp = await self._client.get(f"/measurements/{id}/")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as e:
