@@ -5,3 +5,5 @@ uvicorn
 python-multipart
 python-dotenv
 pandas
+psycopg2-binary
+matplotlib
