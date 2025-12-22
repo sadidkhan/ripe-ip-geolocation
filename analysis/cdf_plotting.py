@@ -47,9 +47,9 @@ def plot_Latency():
 
         # x: pct of fast probes per target, y: fraction of targets
         plt.plot(df_sorted["pct_lt_50ms"], df_sorted["fraction_of_targets"])
-        plt.xlabel("Percent of probes ≤ 50 ms (per target)")
+        plt.xlabel("Percent of probes with ≤ 50 ms (per target)")
         plt.ylabel("Fraction of targets")
-        plt.title("CDF of fast-probe percentage across targets")
+        plt.title("CDF of percentage of probes with ≤ 50 ms across targets")
         plt.grid(True)
         plt.show()
         input("Press Enter to exit...")

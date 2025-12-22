@@ -62,3 +62,60 @@ CREATE INDEX idx_ip_info_ip ON ip_info USING gist (ip_address inet_ops);
 -- For fast lookup by ASN
 CREATE INDEX idx_ip_info_asn ON ip_info (asn);
 
+
+-- step-7: create measurement table and related indexes
+CREATE TABLE measurements (
+    id                BIGSERIAL PRIMARY KEY,
+    measurement_id    BIGINT,
+    probe_id          INTEGER,
+    dst_addr          INET,
+    src_addr          INET,
+    timestamp_unix    BIGINT,
+    timestamp_iso     TIMESTAMPTZ,
+    sent              INTEGER,
+    rcvd              INTEGER,
+    loss_pct          REAL,
+    min_ms            REAL,
+    avg_ms            REAL,
+    max_ms            REAL,
+    rtt1              REAL,
+    rtt2              REAL,
+    rtt3              REAL
+);
+
+
+CREATE INDEX idx_measurements_measurement_id
+    ON measurements (measurement_id);
+
+CREATE INDEX idx_measurements_probe_id
+    ON measurements (probe_id);
+
+CREATE INDEX idx_measurements_dst_addr
+    ON measurements (dst_addr);
+
+
+-- get
+SELECT
+    dst_addr,
+	COUNT(*) AS total,
+    COUNT(*) FILTER (WHERE avg_ms <= 50)         AS lt_50ms,
+	COUNT(*) FILTER (WHERE avg_ms > 50)          AS gt_50ms,
+    --COUNT(*) FILTER (WHERE avg_ms >= 50 AND avg_ms < 100) AS btw_50_100ms,
+    --COUNT(*) FILTER (WHERE avg_ms >= 100)          AS gt_100ms,
+
+    ROUND(100.0 * COUNT(*) FILTER (WHERE avg_ms <= 50) / COUNT(*), 2)
+        AS pct_lt_50ms,
+
+	ROUND(100.0 * COUNT(*) FILTER (WHERE avg_ms > 50) / COUNT(*), 2) 
+        AS pct_gt_50ms
+
+    --ROUND(100.0 * COUNT(*) FILTER (WHERE avg_ms >= 50 AND avg_ms < 100) / COUNT(*), 2) 
+        --AS pct_50_100ms,
+
+    --ROUND(100.0 * COUNT(*) FILTER (WHERE avg_ms >= 100) / COUNT(*), 2) 
+        --AS pct_gt_100ms
+		
+FROM measurements
+GROUP BY dst_addr
+ORDER BY dst_addr;
+

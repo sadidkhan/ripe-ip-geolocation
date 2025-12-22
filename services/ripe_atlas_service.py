@@ -146,7 +146,7 @@ class RipeAtlasService:
                     write_single_msm_id(target, msm_id)
                 
                 if(counter == 90):
-                    await asyncio.sleep(300)  # Pause for 300 seconds (5 minutes)
+                    await asyncio.sleep(800)  # Pause for 800 seconds (13 minutes)
                     counter = 0
 
             except Exception as e:
