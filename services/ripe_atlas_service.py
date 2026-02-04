@@ -134,6 +134,11 @@ class RipeAtlasService:
         probes_value_str = ",".join(map(str, ids))
 
         done_already = read_measurements("data/measurements/measurements.csv")
+        
+        if len(done_already) >= len(targets):
+            return "All measurements have already been created."
+        
+        measurements_created = 0
         counter = 0
         for target in targets:
             if target in done_already:
@@ -144,7 +149,7 @@ class RipeAtlasService:
                 msm_id = measurements[0] if measurements else None
                 if msm_id:
                     write_single_msm_id(target, msm_id)
-                
+                    measurements_created += 1
                 if(counter == 90):
                     await asyncio.sleep(800)  # Pause for 800 seconds (13 minutes)
                     counter = 0
@@ -153,6 +158,10 @@ class RipeAtlasService:
                 write_failed_msm_target(target, str(e))
                 print(f"Error creating measurement for {target}: {e}")
                 # await asyncio.sleep(120)  # Pause before next attempt
+        
+        if measurements_created == 0:
+            return "No new measurements were created."
+        return f"Created {measurements_created} new measurements."
     
 
     async def process_ping_msm_results(self):
