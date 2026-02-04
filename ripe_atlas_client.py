@@ -1,14 +1,9 @@
-# atlas_client.py
-import os
-import httpx
+"""RIPE Atlas API client - moved to infrastructure/clients/ripe_atlas_client.py"""
+# This file is kept for backwards compatibility
+# Import from the new location
+from infrastructure.clients.ripe_atlas_client import RipeAtlasClient
 
-RIPE_ATLAS_BASE_URL = os.getenv("RIPE_ATLAS_BASE_URL", "https://atlas.ripe.net/api/v2/")
-RIPE_ATLAS_API_KEY = os.getenv("RIPE_ATLAS_API_KEY")  # store securely in env
-
-import logging
-logger = logging.getLogger("ripe_atlas")
-
-class RipeAtlasClient:
+__all__ = ["RipeAtlasClient"]
 
     
     """HTTPS client for RIPE Atlas API with API key auth."""
