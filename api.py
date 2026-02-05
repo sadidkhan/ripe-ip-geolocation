@@ -12,15 +12,15 @@ from dotenv import load_dotenv
 
 from services.ripe_atlas_service import RipeAtlasService
 
+# Import routers
+from apis.routes import measurement_router, probe_router
+
 load_dotenv()
-# Import your IpinfoClient and GeoLiteClient here
-# from ip_info_client import IpinfoClient
-# from geo_lite_client import GeoLiteClient
-
 logger = setup_logger()
-app = FastAPI()
 
-# Frontend origin(s)
+app = FastAPI(title="RIPE IP Geolocation API")
+
+# CORS middleware
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -28,11 +28,15 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,          # don't use "*" if you need cookies
-    allow_credentials=True,         # set to False if not using cookies/auth
-    allow_methods=["POST", "OPTIONS"],  # or ["*"] during dev
-    allow_headers=["*"],            # or list explicitly: ["content-type", "authorization"]
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(measurement_router)
+app.include_router(probe_router)
 
 
 @app.get("/")
@@ -41,7 +45,6 @@ def home():
 
 @app.get("/hello")
 def hello():
-    get_anycast_ips()
     return {"message": "Hello, world!"}
 
 @app.post("/upload")
