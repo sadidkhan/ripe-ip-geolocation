@@ -44,18 +44,18 @@ async def initiate_measurements(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# @router.post("/process-results")
-# async def process_measurement_results(
-#     measurement_service: MeasurementService = Depends(get_measurement_service),
-# ):
-#     """Process and save measurement results."""
-#     try:
-#         result = await measurement_service.process_and_save_results()
-#         result = await measurement_service.process_and_save_results(ripe_client)
-#         return result
-#     except Exception as e:
-#         logger.error(f"Error processing results: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
+@router.post("/process-results/{continent_code}")
+async def process_measurement_results(
+    continent_code: str,
+    measurement_service: MeasurementService = Depends(get_measurement_service),
+):
+    """Process and save measurement results."""
+    try:
+        result = await measurement_service.fetch_measurement_results(continent_code=continent_code)
+        return result
+    except Exception as e:
+        logger.error(f"Error processing results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # @router.get("/{measurement_id}")

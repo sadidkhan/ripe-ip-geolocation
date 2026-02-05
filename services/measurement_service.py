@@ -6,7 +6,7 @@ from fastapi import Path
 
 
 from anycast_ip_collection import get_anycast_ips
-from models.measurement import Measurement
+from models.measurement import Measurement, PingResult
 from repositories.measurement_repository import MeasurementRepository
 from ripe_atlas_client import RipeAtlasClient
 from services.probe_service import ProbeService
@@ -128,3 +128,80 @@ class MeasurementService:
                 }
             ],
         }
+    
+    
+    async def fetch_measurement_results(
+        self,
+        continent_code: str = "AF",
+    ) -> AsyncGenerator[list[PingResult], None]:
+        """Fetch results for all measurements that haven't been fetched yet."""
+        
+        measurements_csv = f"data/measurements/measurements_{continent_code.lower()}.csv"
+        results_csv = f"data/measurements/measurement_details_{continent_code.lower()}.csv"
+
+        all_measurements = self.repo.read_all_measurements(measurements_csv)
+        already_fetched = self.repo.read_fetched_results(results_csv)
+        
+        measurements_to_fetch = [
+            msm_id for msm_id in all_measurements.values()
+            if msm_id not in already_fetched
+        ]
+        
+        logger.info(f"Fetching results for {len(measurements_to_fetch)} measurements")
+        
+        total_saved = 0
+        counter = 0
+        async with RipeAtlasClient() as client:
+            for msm_id in measurements_to_fetch:
+                logger.info(f"Fetching results for measurement {msm_id}")
+                
+                try:
+                    response = await client.get_measurement_result(msm_id)
+                    
+                    if response:
+                        # Convert API response to domain models
+                        ping_results = [
+                            PingResult.from_api_response(result_data)
+                            for result_data in response
+                        ]
+                        
+                        self.repo.write_ping_results(ping_results, results_csv)
+                        total_saved += 1
+                        logger.info(f"Saved {len(ping_results)} results")
+                    
+                    counter += 1
+                    if counter % 10 == 0:
+                        await asyncio.sleep(10) #self.batch_sleep
+                
+                except Exception as e:
+                    logger.error(f"Error fetching results for measurement {msm_id}: {e}")
+        
+        return {
+            "status": "success",
+            "message": f"Processed and saved {total_saved} results",
+            "saved": total_saved,
+            "planned": len(measurements_to_fetch),
+            "remaining": len(measurements_to_fetch) - total_saved
+        }
+    
+    # async def process_and_save_results(self, ripe_client) -> dict:
+    #     """Process measurement results and save them."""
+    #     total_saved = 0
+        
+    #     async for ping_results in self.fetch_measurement_results(ripe_client):
+    #         if ping_results:
+    #             self.repo.write_ping_results(ping_results)
+    #             total_saved += len(ping_results)
+    #             logger.info(f"Saved {len(ping_results)} results")
+        
+    #     return {
+    #         "status": "success",
+    #         "message": f"Processed and saved {total_saved} results",
+    #         "saved": total_saved,
+    #     }
+    
+    async def get_measurement_by_id(self, measurement_id: int, ripe_client) -> dict:
+        """Get a specific measurement by ID."""
+        async with ripe_client as client:
+            response = await client.get_measurement(measurement_id)
+            return response
