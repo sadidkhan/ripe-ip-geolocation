@@ -97,8 +97,8 @@ def write_ip_list_to_csv(ip_list, filename, columns=["ip"]):
         for ip in ip_list:
             writer.writerow([ip])
 
-def get_anycast_ips():
-    csv_path = "data/anycast/anycast_ip_list.csv"
+def get_anycast_ips(param_value: int = 0):
+    csv_path = f"data/anycast/anycast_ip_list_{param_value}.csv"
     if os.path.exists(csv_path):
         ips = []
         with open(csv_path, "r", encoding="utf-8") as f:
@@ -107,7 +107,7 @@ def get_anycast_ips():
                 ips.append(row["ip"])
         return ips
     else:
-        anycast_df = get_anycast_list(date_str="2025/10/08", param_value=0)
+        anycast_df = get_anycast_list(date_str="2025/10/08", param_value=param_value)
         anycast_dict = build_anycast_dict(anycast_df)
         matched_ips = retrieve_ips_from_fsdb_hitlist(anycast_dict)
         ips = get_final_anycast_ips(anycast_dict)
@@ -130,7 +130,7 @@ async def get_anycast_ip_details():
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     header_needed = not (os.path.exists(OUTPUT_FILE) and os.path.getsize(OUTPUT_FILE) > 0)
 
-    ips = get_anycast_ips()
+    ips = get_anycast_ips(10)
 
     # read existing IPs (if any) to avoid duplicate lookups/writes
     existing_ips = set()
