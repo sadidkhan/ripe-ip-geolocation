@@ -10,6 +10,8 @@ from models.measurement import Measurement, PingResult
 from repositories.measurement_repository import MeasurementRepository
 from ripe_atlas_client import RipeAtlasClient
 from services.probe_service import ProbeService
+import os
+import json
 
 logger = logging.getLogger("ripe_atlas")
 
@@ -22,8 +24,28 @@ class MeasurementService:
         self.repo = measurement_repository
         self.rate_limit_count = 90  # Number of requests before sleeping
         self.rate_limit_sleep = 800   # Sleep duration in seconds
+        self.initialize_key_list()
+        self.ripe_client = RipeAtlasClient(api_key=self.get_api_key())
         
+    def initialize_key_list(self) -> list: 
+        """Get a dictionary of RIPE Atlas API keys."""
+        keys = json.loads(os.environ["RIPE_ATLAS_API_KEYS"])
+        key_list = []
+        for key_name, key_value in keys.items():
+            key = {}
+            key["key"] = key_value
+            key["is_used"] = False
+            key_list.append(key)
+            
+        self.ripe_atlas_keys = key_list
     
+    def get_api_key(self):
+        """Initialize the RIPE Atlas client with the first available API key."""
+        for key in self.ripe_atlas_keys:
+            if not key["is_used"]:
+                key["is_used"] = True
+                return key["key"]
+        return None
     
     async def create_measurements(
         self,
@@ -33,7 +55,7 @@ class MeasurementService:
         """Create measurements for multiple targets with rate limiting."""
         # Check what's already done
         measurements_csv = f"data/measurements/measurements_{continent_code.lower()}.csv"
-        targets = get_anycast_ips()
+        targets = get_anycast_ips(10)
         
         existing_measurements = self.repo.read_all_measurements(measurements_csv)
         
@@ -47,13 +69,14 @@ class MeasurementService:
         # Filter out targets that already have measurements
         targets_to_process = [t for t in targets if t not in existing_measurements]
         
-        probes = await self.probe_service.get_continent_probes(continent_code)        
+        probes = await self.probe_service.get_filtered_probes(continent_code)
         if not probes:
             return {
                 "status": "complete",
                 "message": "No probes available to create a measurement.",
                 "created": 0,
             }
+        
         # Create probe string
         probe_ids_string = ",".join(str(probe["id"]) for probe in probes)
         
@@ -61,45 +84,121 @@ class MeasurementService:
         counter = 0
         
         logger.info(f"Creating measurements for {len(targets_to_process)} targets")
+        #is_limit_exceed_error = False
         
-        async with RipeAtlasClient() as client:
-            for target in targets_to_process:
-                try:
-                    counter += 1
+         # Build measurement data template
+        # async with self.ripe_client as client:
+        #     for target in targets_to_process:
+        #         try:
                     
-                    # Create the measurement
-                    measurement_data = self._build_measurement_data(
-                        target, probe_ids_string, len(probes), measurement_type
-                    )
+        #             # Create the measurement
+        #             measurement_data = self._build_measurement_data(
+        #                 target, probe_ids_string, len(probes), measurement_type
+        #             )
                     
-                    response = await client.create_measurement(target, measurement_data)
-                    measurement_ids = response.get("measurements", [])
+        #             response = await client.create_measurement(target, measurement_data)
+        #             measurement_ids = response.get("measurements", [])
                     
-                    if measurement_ids:
-                        msm_id = measurement_ids[0]
-                        measurement = Measurement(
-                            id=msm_id,
-                            target=target,
-                            measurement_type=measurement_type,
-                            status="pending",
-                        )
-                        self.repo.write_measurement(measurement, measurements_csv)
-                        measurements_created += 1
-                        logger.info(f"Created measurement {msm_id} for {target}")
+        #             if measurement_ids:
+        #                 msm_id = measurement_ids[0]
+        #                 measurement = Measurement(
+        #                     id=msm_id,
+        #                     target=target,
+        #                     measurement_type=measurement_type,
+        #                     status="pending",
+        #                 )
+        #                 self.repo.write_measurement(measurement, measurements_csv)
+        #                 measurements_created += 1
+        #                 counter += 1
+
+        #                 logger.info(f"Created measurement {msm_id} for {target}")
                     
-                    # Rate limiting
-                    if counter >= self.rate_limit_count:
-                        logger.info(f"Rate limit reached, sleeping for {self.rate_limit_sleep}s")
-                        await asyncio.sleep(self.rate_limit_sleep)
-                        counter = 0
+        #             # Rate limiting
+        #             if counter >= self.rate_limit_count:
+        #                 logger.info(f"Rate limit reached, sleeping for {self.rate_limit_sleep}s")
+        #                 await asyncio.sleep(self.rate_limit_sleep)
+        #                 counter = 0
                 
-                except Exception as e:
-                    logger.error(f"Error creating measurement for {target}: {e}")
+        #         except Exception as e:
+        #             logger.error(f"Error creating measurement for {target}: {e}")
+        #             if e.response is not None and b"higher than your maximum daily results limit 100000" in e.response.content:
+        #                 logger.error("Daily limit reached, stopping measurement creation.")
+        #                 is_limit_exceed_error = True
+                
+        #         finally:
+        #             logger.info(
+        #                 "Measurement run summary | "
+        #                 f"targets to process={len(targets_to_process)}, "
+        #                 f"created={measurements_created}, "
+        #                 f"remaining={len(targets_to_process) - measurements_created}, "
+        #             )
+        #             if is_limit_exceed_error:
+        #                 api_key=self.get_api_key()
+        #                 if api_key:
+        #                     self.ripe_client = RipeAtlasClient(api_key)  # Switch to next API key
+        #                     self.create_measurements(continent_code, measurement_type)  # Retry with new key
+        #                 else:    
+        #                     logger.info("Daily limit exceeded, sleeping for 24 hours.")
+        #                     await asyncio.sleep(24 * 3600) # Sleep for 24 hours if daily limit is exceeded
+                            
+        
+        for target in targets_to_process:
+            # Create the measurement
+            measurement_data = self._build_measurement_data(
+                target, probe_ids_string, len(probes), measurement_type
+            )
+            
+            try:
+                #async with self.ripe_client as client:
+                response = await self.ripe_client.create_measurement(target, measurement_data)
+            
+                measurement_ids = response.get("measurements", [])
+            
+                if measurement_ids:
+                    msm_id = measurement_ids[0]
+                    measurement = Measurement(
+                        id=msm_id,
+                        target=target,
+                        measurement_type=measurement_type,
+                        status="pending",
+                    )
+                    self.repo.write_measurement(measurement, measurements_csv)
+                    measurements_created += 1
+                    counter += 1
+
+                    logger.info(f"Created measurement {msm_id} for {target}")
+                
+                # Rate limiting
+                if counter >= self.rate_limit_count:
+                    logger.info(f"Rate limit reached, sleeping for {self.rate_limit_sleep}s")
+                    await asyncio.sleep(self.rate_limit_sleep)
+                    counter = 0
+        
+            except Exception as e:
+                logger.error(f"Error creating measurement for {target}: {e}")
+                if e.response is not None and b"higher than your maximum daily results limit 100000" in e.response.content:
+                    logger.error("Daily limit reached, stopping measurement creation.")
+                    #is_limit_exceed_error = True
+                    api_key=self.get_api_key()
+                    if api_key:
+                        await self.ripe_client.aclose()
+                        self.ripe_client = RipeAtlasClient(api_key)  # Switch to next API key
+                        #self.create_measurements(continent_code, measurement_type)  # Retry with new key
+                    else:    
+                        logger.info("No key left for today. Daily limit exceeded, sleeping for 24 hours.")
+                        await asyncio.sleep(24 * 3600) # Sleep for 24 hours if daily limit is exceeded
+        
+            logger.info(
+                "Measurement run summary | "
+                f"targets to process={len(targets_to_process)}, "
+                f"created={measurements_created}, "
+                f"remaining={len(targets_to_process) - measurements_created}, "
+            )
+                    
+                    
         
         return {
             "status": "success",
-            "message": f"Created {measurements_created} new measurements.",
-            "created": measurements_created,
         }
     
     def _build_measurement_data(
@@ -167,7 +266,7 @@ class MeasurementService:
                         
                         self.repo.write_ping_results(ping_results, results_csv)
                         total_saved += 1
-                        logger.info(f"Saved {len(ping_results)} results")
+                        logger.info(f"Saved {total_saved} results")
                     
                     counter += 1
                     if counter % 10 == 0:
