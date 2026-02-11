@@ -1,8 +1,9 @@
 """Probe service with business logic."""
 import logging
-from typing import Optional
 from repositories.probe_repository import ProbeRepository
 from ripe_atlas_client import RipeAtlasClient
+from typing import Any, Dict, List, Tuple
+from collections import defaultdict
 
 logger = logging.getLogger("ripe_atlas")
 
@@ -42,6 +43,11 @@ class ProbeService:
         
         return probes
     
+    async def get_filtered_probes(self, continent_code: str):
+        probes = await self.get_continent_probes(continent_code)
+        filtered_probes = self.filter_max_two_probes_per_country_asn(probes)
+        logger.info(f"continent_code: {continent_code}, total_continent_probes: {len(probes)}, filtered_probes: {len(filtered_probes)}")
+        return filtered_probes
     
     async def get_continent_probes(self, continent_code: str):
         settings = self.getSettings(continent_code)
@@ -63,6 +69,54 @@ class ProbeService:
         logger.info(f"Cached {len(continent_probes)} {settings['continent']} probes")
         
         return continent_probes
+    
+
+    def filter_max_two_probes_per_country_asn(
+        self,
+        probes: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Keep at most 2 probes per (country_code, asn_v4).
+
+        Ranking rule (best first):
+        1) last_connected (desc)
+        2) total_uptime (desc)
+        3) id (asc)  # stable
+        """
+        def as_int(v, default=0):
+            try:
+                return int(v)
+            except Exception:
+                return default
+
+        buckets: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
+
+        for p in probes:
+            cc = p.get("country_code")
+            asn = p.get("asn_v4")
+            if not cc or asn is None:
+                continue
+
+            asn_i = as_int(asn, -1)
+            if asn_i == -1:
+                continue
+
+            buckets[(cc, asn_i)].append(p)
+
+        selected: List[Dict[str, Any]] = []
+        for (_cc, _asn), items in buckets.items():
+            items_sorted = sorted(
+                items,
+                key=lambda x: (
+                    -as_int(x.get("last_connected"), 0),
+                    -as_int(x.get("total_uptime"), 0),
+                    as_int(x.get("id"), 10**18),
+                ),
+            )
+            selected.extend(items_sorted[:1])
+
+        return selected
+
     
     def getSettings(self, continent_code: str = "AF") -> dict:
         
