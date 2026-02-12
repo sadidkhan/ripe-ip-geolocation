@@ -1,9 +1,10 @@
 """Probe service with business logic."""
 import logging
+from typing import Any, Dict, List, Tuple, Optional
 from repositories.probe_repository import ProbeRepository
 from ripe_atlas_client import RipeAtlasClient
-from typing import Any, Dict, List, Tuple
 from collections import defaultdict
+from models.probe import Probe
 
 logger = logging.getLogger("ripe_atlas")
 
@@ -11,10 +12,9 @@ logger = logging.getLogger("ripe_atlas")
 class ProbeService:
     """Business logic for probe operations."""
     
-    def __init__(self):
-        # self.african_probe_repo = african_probe_repository
-        # self.african_countries = african_countries
-        pass
+    def __init__(self, probe_repository: Optional[ProbeRepository] = None):
+        """Initialize ProbeService with optional repository for database operations."""
+        self.repo = probe_repository
     
     async def fetch_all_probes(self):
         probes = []
@@ -190,3 +190,37 @@ class ProbeService:
     # def get_probe_ids_string(self, probes: list[Probe]) -> str:
     #     """Convert probe list to comma-separated ID string for RIPE Atlas API."""
     #     return ",".join(str(probe.id) for probe in probes)
+    
+    # ============================================
+    # DATABASE OPERATIONS
+    # ============================================
+    
+    async def create_probe_in_db(self, probe: Probe) -> dict:
+        """Create a probe in the database."""
+        if not self.repo:
+            return {"status": "error", "message": "Repository not initialized"}
+        return await self.repo.create_probe(probe)
+    
+    async def get_probe_from_db(self, probe_id: int) -> Optional[Probe]:
+        """Get a probe from the database."""
+        if not self.repo:
+            return None
+        return await self.repo.get_probe(probe_id)
+    
+    async def get_all_probes_from_db(self) -> List[Probe]:
+        """Get all probes from the database."""
+        if not self.repo:
+            return []
+        return await self.repo.get_all_probes()
+    
+    async def get_probes_by_country_from_db(self, country_code: str) -> List[Probe]:
+        """Get all probes for a specific country from the database."""
+        if not self.repo:
+            return []
+        return await self.repo.get_probes_by_country(country_code)
+    
+    async def delete_probe_from_db(self, probe_id: int) -> dict:
+        """Delete a probe from the database."""
+        if not self.repo:
+            return {"status": "error", "message": "Repository not initialized"}
+        return await self.repo.delete_probe(probe_id)

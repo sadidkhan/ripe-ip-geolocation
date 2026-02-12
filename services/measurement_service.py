@@ -1,9 +1,9 @@
 import asyncio
 import logging
-from typing import Literal, AsyncGenerator
+from typing import Literal, AsyncGenerator, Optional, List
 
 from fastapi import Path
-
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from anycast_ip_collection import get_anycast_ips
 from models.measurement import Measurement, PingResult
@@ -304,3 +304,46 @@ class MeasurementService:
         async with ripe_client as client:
             response = await client.get_measurement(measurement_id)
             return response
+    
+    # ============================================
+    # DATABASE OPERATIONS
+    # ============================================
+    
+    async def get_measurement_for_target_analysis(self):
+        """Get a measurement from the database."""
+        if not self.repo.session:
+            return None
+        return await self.repo.get_measurements_for_target_analysis()
+    
+    
+    
+    
+    async def create_measurement_in_db(self, measurement: Measurement) -> dict:
+        """Create a measurement in the database."""
+        if not self.repo.session:
+            return {"status": "error", "message": "Database session not initialized"}
+        return await self.repo.create_measurement(measurement)
+    
+    async def get_measurement_from_db(self, measurement_id: int) -> Optional[Measurement]:
+        """Get a measurement from the database."""
+        if not self.repo.session:
+            return None
+        return await self.repo.get_measurement(measurement_id)
+    
+    async def get_all_measurements_from_db(self) -> List[Measurement]:
+        """Get all measurements from the database."""
+        if not self.repo.session:
+            return []
+        return await self.repo.get_all_measurements()
+    
+    async def update_measurement_status_in_db(self, measurement_id: int, status: str) -> dict:
+        """Update measurement status in the database."""
+        if not self.repo.session:
+            return {"status": "error", "message": "Database session not initialized"}
+        return await self.repo.update_measurement_status(measurement_id, status)
+    
+    async def delete_measurement_from_db(self, measurement_id: int) -> dict:
+        """Delete a measurement from the database."""
+        if not self.repo.session:
+            return {"status": "error", "message": "Database session not initialized"}
+        return await self.repo.delete_measurement(measurement_id)

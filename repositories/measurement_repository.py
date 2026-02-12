@@ -2,15 +2,24 @@
 import csv
 import os
 from pathlib import Path
+from typing import Optional, List
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, insert, update, delete, text
 from models import Measurement
 from models.measurement import PingResult
 
 
 class MeasurementRepository:
-    """Handles measurement data persistence to CSV."""
+    """Handles measurement data persistence to database and CSV."""
     
-    def __init__(self):
-        pass
+    def __init__(self, session: Optional[AsyncSession] = None):
+        """
+        Initialize repository with optional database session.
+        
+        Args:
+            session: AsyncSession for database operations
+        """
+        self.session = session
      
     
     def read_all_measurements(self, measurements_csv: Path) -> dict[str, int]:
@@ -53,10 +62,10 @@ class MeasurementRepository:
     #             writer.writerow(["target", "timestamp", "error"])
     #         writer.writerow([target, datetime.now().isoformat(timespec="seconds"), error])
     
-    def read_fetched_results(self, results_csv: Path) -> set[int]:
+    def read_fetched_results(self, results_csv: Path) -> list[int]:
         """Read measurement IDs that have already been fetched."""
         if not os.path.isfile(results_csv):
-            return set()
+            return []
         
         measurement_ids = set()
         with open(results_csv, newline="", encoding="utf-8") as f:
@@ -68,7 +77,7 @@ class MeasurementRepository:
                         measurement_ids.add(int(msm_id))
                     except ValueError:
                         continue
-        return measurement_ids
+        return sorted(measurement_ids)
     
     def write_ping_results(self, results: list[PingResult], results_csv: Path) -> None:
         """Write ping results to CSV."""
@@ -110,3 +119,121 @@ class MeasurementRepository:
                     result.rtt3,
                 ]
                 writer.writerow(row)
+    
+    # ============================================
+    # DATABASE OPERATIONS
+    # ============================================
+    
+    async def get_measurements_for_target_analysis(self):
+        result = await self.session.execute(text("""
+            With filter_records_by_rcvdPackets AS (
+                SELECT DISTINCT
+                    m.*,
+                    i.asn,
+                    i.as_name,
+                    afp.probe_id as afp_probe_id,
+                    afp.country_code
+                FROM measurements AS m
+                JOIN ip_info AS i
+                    ON m.dst_addr = i.ip_address
+                JOIN african_probes AS afp ON afp.probe_id = m.probe_id
+                WHERE rcvd > 0
+                --Select * from tmp_measurements_with_asn where rcvd > 0
+            )
+            SELECT 
+                dst_addr,
+                COUNT(*)                                  AS n_samples,
+                MIN(m.avg_ms)                             AS min_rtt_ms,
+                MAX(m.avg_ms)                             AS max_rtt_ms,
+                AVG(m.avg_ms)                             AS mean_rtt_ms,
+                STDDEV(m.avg_ms)                      AS stddev_rtt_ms,
+                percentile_cont(0.05) WITHIN GROUP (ORDER BY m.avg_ms) AS p5_rtt_ms,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY m.avg_ms) AS p50_rtt_ms,
+                percentile_cont(0.75) WITHIN GROUP (ORDER BY m.avg_ms) AS p75_rtt_ms,
+                percentile_cont(0.95) WITHIN GROUP (ORDER BY m.avg_ms) AS p95_rtt_ms,
+
+            -- spread metrics
+            (percentile_cont(0.95) WITHIN GROUP (ORDER BY m.avg_ms)
+            - percentile_cont(0.05) WITHIN GROUP (ORDER BY m.avg_ms)) AS ipr_95_5_ms
+            
+            FROM filter_records_by_rcvdPackets m
+            GROUP BY dst_addr
+        """))
+        a = result.mappings().all()
+        return a
+    
+    async def create_measurement(self, measurement: Measurement) -> dict:
+        """Create a measurement in the database."""
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+        
+        try:
+            query = insert(Measurement).values(
+                id=measurement.id,
+                target=measurement.target,
+                measurement_type=measurement.measurement_type,
+                status=measurement.status,
+                created_at=measurement.created_at,
+            )
+            await self.session.execute(query)
+            await self.session.commit()
+            return {"status": "success", "measurement_id": measurement.id}
+        except Exception as e:
+            await self.session.rollback()
+            return {"status": "error", "message": str(e)}
+    
+    async def get_measurement(self, measurement_id: int) -> Optional[Measurement]:
+        """Get a measurement from the database."""
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+        
+        try:
+            query = select(Measurement).where(Measurement.id == measurement_id)
+            result = await self.session.execute(query)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            print(f"Error fetching measurement: {e}")
+            return None
+    
+    async def get_all_measurements(self) -> List[Measurement]:
+        """Get all measurements from the database."""
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+        
+        try:
+            query = select(Measurement)
+            result = await self.session.execute(query)
+            return result.scalars().all()
+        except Exception as e:
+            print(f"Error fetching measurements: {e}")
+            return []
+    
+    async def update_measurement_status(self, measurement_id: int, status: str) -> dict:
+        """Update measurement status in the database."""
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+        
+        try:
+            query = update(Measurement).where(
+                Measurement.id == measurement_id
+            ).values(status=status)
+            await self.session.execute(query)
+            await self.session.commit()
+            return {"status": "success", "measurement_id": measurement_id}
+        except Exception as e:
+            await self.session.rollback()
+            return {"status": "error", "message": str(e)}
+    
+    async def delete_measurement(self, measurement_id: int) -> dict:
+        """Delete a measurement from the database."""
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+        
+        try:
+            query = delete(Measurement).where(Measurement.id == measurement_id)
+            await self.session.execute(query)
+            await self.session.commit()
+            return {"status": "success", "measurement_id": measurement_id}
+        except Exception as e:
+            await self.session.rollback()
+            return {"status": "error", "message": str(e)}
