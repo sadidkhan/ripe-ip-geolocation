@@ -186,7 +186,10 @@ class MeasurementService:
                         #self.create_measurements(continent_code, measurement_type)  # Retry with new key
                     else:    
                         logger.info("No key left for today. Daily limit exceeded, sleeping for 24 hours.")
+                        self.initialize_key_list()  # Reset keys for the next day
                         await asyncio.sleep(24 * 3600) # Sleep for 24 hours if daily limit is exceeded
+                else:
+                    logger.error(f"Unexpected error: {e}")
         
             logger.info(
                 "Measurement run summary | "
