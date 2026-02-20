@@ -47,6 +47,58 @@ class MeasurementService:
                 return key["key"]
         return None
     
+    async def _create_and_save_measurement(self, target: str, measurement_data: dict, measurement_type: str, measurements_csv: str) -> tuple[bool, int]:
+        """
+        Create a measurement and save it to CSV.
+        Returns: (success: bool, msm_id: int or 0 if failed)
+        """
+        try:
+            response = await self.ripe_client.create_measurement(target, measurement_data)
+            measurement_ids = response.get("measurements", [])
+            
+            if measurement_ids:
+                msm_id = measurement_ids[0]
+                measurement = Measurement(
+                    id=msm_id,
+                    target=target,
+                    measurement_type=measurement_type,
+                    status="pending",
+                )
+                self.repo.write_measurement(measurement, measurements_csv)
+                logger.info(f"Created measurement {msm_id} for {target}")
+                return True, msm_id
+            return False, 0
+        except Exception as e:
+            raise e
+    
+    async def _create_measurement_with_retry(self, target: str, measurement_data: dict, measurement_type: str, measurements_csv: str) -> tuple[bool, int]:
+        """
+        Create a measurement with automatic API key retry on daily limit.
+        Returns: (success: bool, msm_id: int or 0 if failed)
+        """
+        while True:
+            try:
+                success, msm_id = await self._create_and_save_measurement(target, measurement_data, measurement_type, measurements_csv)
+                return success, msm_id
+            except Exception as e:
+                if e.response is not None and b"higher than your maximum daily results limit 100000" in e.response.content:
+                    logger.error("Daily limit reached for current API key.")
+                    api_key = self.get_api_key()
+                    
+                    if not api_key:
+                        logger.info("No API keys left for today. Sleeping for 24 hours.")
+                        self.initialize_key_list()
+                        await asyncio.sleep(24 * 3600)
+                        return False, 0
+                    
+                    logger.info(f"Switching to next API key and retrying target {target}...")
+                    await self.ripe_client.aclose()
+                    self.ripe_client = RipeAtlasClient(api_key)
+                    # Continue loop to retry with new key
+                else:
+                    logger.error(f"Unexpected error: {e}")
+                    return False, 0
+    
     async def create_measurements(
         self,
         continent_code: str = "AF",
@@ -84,63 +136,6 @@ class MeasurementService:
         counter = 0
         
         logger.info(f"Creating measurements for {len(targets_to_process)} targets")
-        #is_limit_exceed_error = False
-        
-         # Build measurement data template
-        # async with self.ripe_client as client:
-        #     for target in targets_to_process:
-        #         try:
-                    
-        #             # Create the measurement
-        #             measurement_data = self._build_measurement_data(
-        #                 target, probe_ids_string, len(probes), measurement_type
-        #             )
-                    
-        #             response = await client.create_measurement(target, measurement_data)
-        #             measurement_ids = response.get("measurements", [])
-                    
-        #             if measurement_ids:
-        #                 msm_id = measurement_ids[0]
-        #                 measurement = Measurement(
-        #                     id=msm_id,
-        #                     target=target,
-        #                     measurement_type=measurement_type,
-        #                     status="pending",
-        #                 )
-        #                 self.repo.write_measurement(measurement, measurements_csv)
-        #                 measurements_created += 1
-        #                 counter += 1
-
-        #                 logger.info(f"Created measurement {msm_id} for {target}")
-                    
-        #             # Rate limiting
-        #             if counter >= self.rate_limit_count:
-        #                 logger.info(f"Rate limit reached, sleeping for {self.rate_limit_sleep}s")
-        #                 await asyncio.sleep(self.rate_limit_sleep)
-        #                 counter = 0
-                
-        #         except Exception as e:
-        #             logger.error(f"Error creating measurement for {target}: {e}")
-        #             if e.response is not None and b"higher than your maximum daily results limit 100000" in e.response.content:
-        #                 logger.error("Daily limit reached, stopping measurement creation.")
-        #                 is_limit_exceed_error = True
-                
-        #         finally:
-        #             logger.info(
-        #                 "Measurement run summary | "
-        #                 f"targets to process={len(targets_to_process)}, "
-        #                 f"created={measurements_created}, "
-        #                 f"remaining={len(targets_to_process) - measurements_created}, "
-        #             )
-        #             if is_limit_exceed_error:
-        #                 api_key=self.get_api_key()
-        #                 if api_key:
-        #                     self.ripe_client = RipeAtlasClient(api_key)  # Switch to next API key
-        #                     self.create_measurements(continent_code, measurement_type)  # Retry with new key
-        #                 else:    
-        #                     logger.info("Daily limit exceeded, sleeping for 24 hours.")
-        #                     await asyncio.sleep(24 * 3600) # Sleep for 24 hours if daily limit is exceeded
-                            
         
         for target in targets_to_process:
             # Create the measurement
@@ -148,48 +143,16 @@ class MeasurementService:
                 target, probe_ids_string, len(probes), measurement_type
             )
             
-            try:
-                #async with self.ripe_client as client:
-                response = await self.ripe_client.create_measurement(target, measurement_data)
+            success, msm_id = await self._create_measurement_with_retry(target, measurement_data, measurement_type, measurements_csv)
+            if success:
+                measurements_created += 1
+                counter += 1
             
-                measurement_ids = response.get("measurements", [])
-            
-                if measurement_ids:
-                    msm_id = measurement_ids[0]
-                    measurement = Measurement(
-                        id=msm_id,
-                        target=target,
-                        measurement_type=measurement_type,
-                        status="pending",
-                    )
-                    self.repo.write_measurement(measurement, measurements_csv)
-                    measurements_created += 1
-                    counter += 1
-
-                    logger.info(f"Created measurement {msm_id} for {target}")
-                
-                # Rate limiting
-                if counter >= self.rate_limit_count:
-                    logger.info(f"Rate limit reached, sleeping for {self.rate_limit_sleep}s")
-                    await asyncio.sleep(self.rate_limit_sleep)
-                    counter = 0
-        
-            except Exception as e:
-                logger.error(f"Error creating measurement for {target}: {e}")
-                if e.response is not None and b"higher than your maximum daily results limit 100000" in e.response.content:
-                    logger.error("Daily limit reached, stopping measurement creation.")
-                    #is_limit_exceed_error = True
-                    api_key=self.get_api_key()
-                    if api_key:
-                        await self.ripe_client.aclose()
-                        self.ripe_client = RipeAtlasClient(api_key)  # Switch to next API key
-                        #self.create_measurements(continent_code, measurement_type)  # Retry with new key
-                    else:    
-                        logger.info("No key left for today. Daily limit exceeded, sleeping for 24 hours.")
-                        self.initialize_key_list()  # Reset keys for the next day
-                        await asyncio.sleep(24 * 3600) # Sleep for 24 hours if daily limit is exceeded
-                else:
-                    logger.error(f"Unexpected error: {e}")
+            # Rate limiting
+            if counter >= self.rate_limit_count:
+                logger.info(f"Rate limit reached, sleeping for {self.rate_limit_sleep}s")
+                await asyncio.sleep(self.rate_limit_sleep)
+                counter = 0
         
             logger.info(
                 "Measurement run summary | "
