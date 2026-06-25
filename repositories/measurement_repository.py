@@ -1,12 +1,15 @@
 """Measurement repository for data persistence."""
 import csv
+import logging
 import os
 from pathlib import Path
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, update, delete, text
 from models import Measurement
-from models.measurement import PingResult
+from models.measurement import PingResult, PingResultDB
+
+logger = logging.getLogger("ripe_atlas")
 
 
 class MeasurementRepository:
@@ -119,7 +122,52 @@ class MeasurementRepository:
                     result.rtt3,
                 ]
                 writer.writerow(row)
-    
+
+    async def write_ping_results_to_db(self, results: list[PingResult]) -> dict:
+        """Batch save ping results to the measurements database table.
+        
+        Calculates serial_no similar to CSV write method (incrementing from 1).
+        """
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+
+        if not results:
+            return {"status": "success", "saved": 0}
+
+        try:
+            rows = [result.to_db_dict(serial_no=idx) for idx, result in enumerate(results, start=1)]
+            query = insert(PingResultDB)
+            await self.session.execute(query, rows)
+            await self.session.commit()
+            return {"status": "success", "saved": len(rows)}
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Failed to save ping results to DB: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def get_existing_measurement_ids_in_db(self, continent_code: Optional[str] = None) -> list[int]:
+        """Get measurement IDs that already have results in the DB.
+        
+        Args:
+            continent_code: Optional 2-character continent code (AF, SA, NA, etc.) to filter results.
+                           If provided, only returns IDs for that continent.
+        """
+        if not self.session:
+            raise RuntimeError("Database session not initialized")
+        
+        try:
+            if continent_code:
+                query = text("SELECT DISTINCT measurement_id FROM measurements WHERE continent_code = :continent_code")
+                result = await self.session.execute(query, {"continent_code": continent_code})
+            else:
+                query = text("SELECT DISTINCT measurement_id FROM measurements")
+                result = await self.session.execute(query)
+            rows = result.fetchall()
+            return [row[0] for row in rows if row[0] is not None]
+        except Exception as e:
+            logger.error(f"Failed to fetch existing measurement IDs from DB: {e}")
+            return []
+
     # ============================================
     # DATABASE OPERATIONS
     # ============================================
@@ -162,78 +210,30 @@ class MeasurementRepository:
         a = result.mappings().all()
         return a
     
-    async def create_measurement(self, measurement: Measurement) -> dict:
-        """Create a measurement in the database."""
-        if not self.session:
-            raise RuntimeError("Database session not initialized")
-        
-        try:
-            query = insert(Measurement).values(
-                id=measurement.id,
-                target=measurement.target,
-                measurement_type=measurement.measurement_type,
-                status=measurement.status,
-                created_at=measurement.created_at,
-            )
-            await self.session.execute(query)
-            await self.session.commit()
-            return {"status": "success", "measurement_id": measurement.id}
-        except Exception as e:
-            await self.session.rollback()
-            return {"status": "error", "message": str(e)}
     
-    async def get_measurement(self, measurement_id: int) -> Optional[Measurement]:
+    async def get_measurement(self, measurement_id: int) -> Optional[PingResultDB]:
         """Get a measurement from the database."""
         if not self.session:
             raise RuntimeError("Database session not initialized")
         
         try:
-            query = select(Measurement).where(Measurement.id == measurement_id)
+            query = select(PingResultDB).where(PingResultDB.measurement_id == measurement_id)
             result = await self.session.execute(query)
-            return result.scalar_one_or_none()
+            return result.scalars().all()
         except Exception as e:
             print(f"Error fetching measurement: {e}")
             return None
     
-    async def get_all_measurements(self) -> List[Measurement]:
+    async def get_all_measurements(self) -> List[PingResultDB]:
         """Get all measurements from the database."""
         if not self.session:
             raise RuntimeError("Database session not initialized")
         
         try:
-            query = select(Measurement)
+            query = select(PingResultDB)
             result = await self.session.execute(query)
             return result.scalars().all()
         except Exception as e:
             print(f"Error fetching measurements: {e}")
             return []
     
-    async def update_measurement_status(self, measurement_id: int, status: str) -> dict:
-        """Update measurement status in the database."""
-        if not self.session:
-            raise RuntimeError("Database session not initialized")
-        
-        try:
-            query = update(Measurement).where(
-                Measurement.id == measurement_id
-            ).values(status=status)
-            await self.session.execute(query)
-            await self.session.commit()
-            return {"status": "success", "measurement_id": measurement_id}
-        except Exception as e:
-            await self.session.rollback()
-            return {"status": "error", "message": str(e)}
-    
-    async def delete_measurement(self, measurement_id: int) -> dict:
-        """Delete a measurement from the database."""
-        if not self.session:
-            raise RuntimeError("Database session not initialized")
-        
-        try:
-            query = delete(Measurement).where(Measurement.id == measurement_id)
-            await self.session.execute(query)
-            await self.session.commit()
-            return {"status": "success", "measurement_id": measurement_id}
-        except Exception as e:
-            await self.session.rollback()
-            return {"status": "error", "message": str(e)}

@@ -6,7 +6,7 @@ from fastapi import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from anycast_ip_collection import get_anycast_ips
-from models.measurement import Measurement, PingResult
+from models.measurement import Measurement, PingResult, PingResultDB
 from repositories.measurement_repository import MeasurementRepository
 from ripe_atlas_client import RipeAtlasClient
 from services.probe_service import ProbeService
@@ -14,6 +14,7 @@ import os
 import json
 
 logger = logging.getLogger("ripe_atlas")
+VALID_CONTINENT_CODES = ["AF", "SA", "NA", "AS"]
 
 class MeasurementService:
     """Service for managing and processing measurements."""
@@ -46,7 +47,7 @@ class MeasurementService:
                 key["is_used"] = True
                 return key["key"]
         return None
-    
+
     async def _create_and_save_measurement(self, target: str, measurement_data: dict, measurement_type: str, measurements_csv: str) -> tuple[bool, int]:
         """
         Create a measurement and save it to CSV.
@@ -105,6 +106,9 @@ class MeasurementService:
         measurement_type: Literal["ping", "traceroute"] = "ping"
     ) -> dict:
         """Create measurements for multiple targets with rate limiting."""
+        if continent_code not in VALID_CONTINENT_CODES:
+            return {"status": "error", "message": "Invalid continent code"}
+
         # Check what's already done
         measurements_csv = f"data/measurements/measurements_{continent_code.lower()}.csv"
         targets = get_anycast_ips(10)
@@ -198,8 +202,10 @@ class MeasurementService:
     async def fetch_measurement_results(
         self,
         continent_code: str = "AF",
-    ) -> AsyncGenerator[list[PingResult], None]:
-        """Fetch results for all measurements that haven't been fetched yet."""
+    ) -> dict:
+        """Fetch results for all measurements that haven't been fetched yet and save to CSV."""
+        if continent_code not in VALID_CONTINENT_CODES:
+            return {"status": "error", "message": "Invalid continent code"}
         
         measurements_csv = f"data/measurements/measurements_{continent_code.lower()}.csv"
         results_csv = f"data/measurements/measurement_details_{continent_code.lower()}.csv"
@@ -214,8 +220,10 @@ class MeasurementService:
         
         logger.info(f"Fetching results for {len(measurements_to_fetch)} measurements")
         
-        total_saved = 0
-        counter = 0
+        total_rows_saved = 0
+        failed_measurements = []
+        measurements_count = 0
+        
         async with RipeAtlasClient() as client:
             for msm_id in measurements_to_fetch:
                 logger.info(f"Fetching results for measurement {msm_id}")
@@ -224,30 +232,111 @@ class MeasurementService:
                     response = await client.get_measurement_result(msm_id)
                     
                     if response:
-                        # Convert API response to domain models
                         ping_results = [
                             PingResult.from_api_response(result_data)
                             for result_data in response
                         ]
                         
                         self.repo.write_ping_results(ping_results, results_csv)
-                        total_saved += 1
-                        logger.info(f"Saved {total_saved} results")
+                        total_rows_saved += len(ping_results)
+                        logger.info(f"Saved measurement {msm_id} with {len(ping_results)} rows to CSV")
                     
-                    counter += 1
-                    if counter % 10 == 0:
-                        await asyncio.sleep(10) #self.batch_sleep
+                    measurements_count += 1
+                    if measurements_count >= 20:
+                        logger.info(f"Rate limit reached, sleeping for 10s")
+                        await asyncio.sleep(10)
+                        measurements_count = 0
                 
                 except Exception as e:
                     logger.error(f"Error fetching results for measurement {msm_id}: {e}")
+                    failed_measurements.append(msm_id)
+                    measurements_count += 1
+                    if measurements_count >= 20:
+                        logger.info(f"Rate limit reached, sleeping for 10s")
+                        await asyncio.sleep(10)
+                        measurements_count = 0
         
         return {
             "status": "success",
-            "message": f"Processed and saved {total_saved} results",
-            "saved": total_saved,
+            "message": f"Processed and saved {total_rows_saved} rows to CSV",
+            "saved": total_rows_saved,
             "planned": len(measurements_to_fetch),
-            "remaining": len(measurements_to_fetch) - total_saved
+            "failed_measurements": failed_measurements
         }
+
+    async def fetch_measurement_results_to_db(
+        self,
+        continent_code: str = "AF",
+    ) -> dict:
+        """Fetch measurement results using DB to track already-fetched measurements.
+                Checks DB for existing measurement IDs and fetches only missing ones.
+        """
+        if continent_code not in VALID_CONTINENT_CODES:
+            return {"status": "error", "message": "Invalid continent code"}
+
+        measurements_csv = f"data/measurements/measurements_{continent_code.lower()}.csv"
+        all_measurements = self.repo.read_all_measurements(measurements_csv)
+        
+        results_csv = f"data/measurements/measurement_details_{continent_code.lower()}.csv"
+        already_fetched = self.repo.read_fetched_results(results_csv)
+        
+        already_fetched_in_db = await self.repo.get_existing_measurement_ids_in_db(continent_code=continent_code)
+        
+        measurements_to_fetch = [
+            msm_id for msm_id in all_measurements.values()
+            if msm_id not in already_fetched_in_db
+        ]
+        
+        logger.info(f"Fetching results for {len(measurements_to_fetch)} measurements (DB-based tracking)")
+        
+        total_rows_saved = 0
+        failed_measurements = []
+        measurements_count = 0
+        
+        async with RipeAtlasClient() as client:
+            for msm_id in measurements_to_fetch:
+                logger.info(f"Fetching results for measurement {msm_id}")
+                
+                try:
+                    response = await client.get_measurement_result(msm_id)
+                    
+                    if response:
+                        ping_results = [
+                            PingResult.from_api_response(result_data, continent_code=continent_code)
+                            for result_data in response
+                        ]
+                        
+                        db_save = await self.repo.write_ping_results_to_db(ping_results)
+                        if db_save["status"] == "success":
+                            total_rows_saved += db_save["saved"]
+                            logger.info(f"Saved measurement {msm_id} with {db_save['saved']} rows to DB")
+                        else:
+                            logger.error(f"Failed to persist measurement {msm_id} to DB: {db_save.get('message')}")
+                            failed_measurements.append(msm_id)
+                    
+                    measurements_count += 1
+                    if measurements_count >= 20:
+                        logger.info(f"Rate limit reached, sleeping for 10s")
+                        await asyncio.sleep(10)
+                        measurements_count = 0
+                
+                except Exception as e:
+                    logger.error(f"Error fetching results for measurement {msm_id}: {e}")
+                    failed_measurements.append(msm_id)
+                    measurements_count += 1
+                    if measurements_count >= 20:
+                        logger.info(f"Rate limit reached, sleeping for 10s")
+                        await asyncio.sleep(10)
+                        measurements_count = 0
+        
+        return {
+            "status": "success",
+            "message": f"Processed and saved {total_rows_saved} rows to DB",
+            "saved": total_rows_saved,
+            "planned": len(measurements_to_fetch),
+            "failed_measurements": failed_measurements
+        }
+
     
     # async def process_and_save_results(self, ripe_client) -> dict:
     #     """Process measurement results and save them."""
@@ -284,13 +373,8 @@ class MeasurementService:
     
     
     
-    async def create_measurement_in_db(self, measurement: Measurement) -> dict:
-        """Create a measurement in the database."""
-        if not self.repo.session:
-            return {"status": "error", "message": "Database session not initialized"}
-        return await self.repo.create_measurement(measurement)
     
-    async def get_measurement_from_db(self, measurement_id: int) -> Optional[Measurement]:
+    async def get_measurement_from_db(self, measurement_id: int) -> Optional[PingResultDB]:
         """Get a measurement from the database."""
         if not self.repo.session:
             return None
@@ -302,14 +386,3 @@ class MeasurementService:
             return []
         return await self.repo.get_all_measurements()
     
-    async def update_measurement_status_in_db(self, measurement_id: int, status: str) -> dict:
-        """Update measurement status in the database."""
-        if not self.repo.session:
-            return {"status": "error", "message": "Database session not initialized"}
-        return await self.repo.update_measurement_status(measurement_id, status)
-    
-    async def delete_measurement_from_db(self, measurement_id: int) -> dict:
-        """Delete a measurement from the database."""
-        if not self.repo.session:
-            return {"status": "error", "message": "Database session not initialized"}
-        return await self.repo.delete_measurement(measurement_id)
