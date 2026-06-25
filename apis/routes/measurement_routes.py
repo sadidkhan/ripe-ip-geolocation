@@ -55,7 +55,7 @@ async def process_measurement_results(
 ):
     """Process and save measurement results."""
     try:
-        result = await measurement_service.fetch_measurement_results(continent_code=continent_code)
+        result = await measurement_service.fetch_measurement_results_to_db(continent_code=continent_code)
         return result
     except Exception as e:
         logger.error(f"Error processing results: {e}")
@@ -63,7 +63,7 @@ async def process_measurement_results(
 
 
 # @router.get("/{measurement_id}")
-# async def get_measurement(
+# async def get_measurement_from_Ripe_atlas(
 #     measurement_id: int,
 #     measurement_service: MeasurementService = Depends(get_measurement_service),
 # ):
@@ -112,13 +112,7 @@ async def get_measurement_from_db(
         
         return {
             "status": "success",
-            "measurement": {
-                "id": measurement.id,
-                "target": measurement.target,
-                "type": measurement.measurement_type,
-                "status": measurement.status,
-                "created_at": measurement.created_at.isoformat() if measurement.created_at else None
-            }
+            "measurement": measurement
         }
     except HTTPException:
         raise
