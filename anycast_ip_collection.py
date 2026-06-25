@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import csv
+import asyncio
 
 import logging
 
@@ -115,7 +116,6 @@ def get_anycast_ips(param_value: int = 0):
         return matched_ips
     
 
-
 async def get_anycast_ip_details():
    
     OUTPUT_FILE = "data/anycast/anycast_ip_details.csv"
@@ -213,4 +213,77 @@ async def get_anycast_ip_details():
     logger.info("Done. Seen=%d, Skipped(existing)=%d, Written=%d, Errors=%d",
                 len(ips), skipped_existing, written, errors)
     return {"seen": len(ips), "skipped_existing": skipped_existing, "written": written, "errors": errors}
+
+
+
+async def fetch_anycast_hostnames_csv(batch_size: int = 20, sleep_sec: int = 10):
+    """Fetch hostname and metadata for anycast IPs and write to CSV.
+
+    Uses `get_anycast_ips(10)` as the IP source and `IpinfoOldClient` for lookups.
+    Writes all returned fields to `data/anycast/anycast_hostnames.csv` and
+    pauses `sleep_sec` seconds after each `batch_size` requests.
+    """
+    OUTPUT_FILE = "data/anycast/anycast_hostnames.csv"
+    FIELDNAMES = [
+        "ip",
+        "hostname",
+        "city",
+        "region",
+        "country",
+        "loc",
+        "org",
+        "postal",
+        "timezone",
+        "readme",
+        "anycast",
+    ]
+
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+
+    ips = get_anycast_ips(10)
+    if not ips:
+        return {"status": "complete", "message": "No IPs to process", "processed": 0}
+
+    header_needed = not (os.path.exists(OUTPUT_FILE) and os.path.getsize(OUTPUT_FILE) > 0)
+
+    processed = 0
+    errors = 0
+
+    from ip_info_client import IpinfoOldClient
+
+    async with IpinfoOldClient() as client:
+        with open(OUTPUT_FILE, "a", newline="", encoding="utf-8") as wf:
+            writer = csv.DictWriter(wf, fieldnames=FIELDNAMES, extrasaction="ignore")
+            if header_needed:
+                writer.writeheader()
+
+            for idx, ip in enumerate(ips, start=1):
+                try:
+                    data = await client.lookup(ip)
+                    if not data:
+                        errors += 1
+                        continue
+
+                    row = {k: data.get(k) for k in FIELDNAMES}
+                    # ensure ip field exists (some endpoints may return it separately)
+                    if not row.get("ip"):
+                        row["ip"] = ip
+
+                    writer.writerow(row)
+                    processed += 1
+
+                except Exception as e:
+                    logger.exception("Lookup/write error for %s: %s", ip, e)
+                    errors += 1
+
+                if idx % batch_size == 0:
+                    await asyncio.sleep(sleep_sec)
+
+            try:
+                wf.flush()
+                os.fsync(wf.fileno())
+            except Exception:
+                pass
+
+    return {"status": "success", "processed": processed, "errors": errors}
 
