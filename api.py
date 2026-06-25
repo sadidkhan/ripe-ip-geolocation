@@ -1,7 +1,8 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
+from typing import List, Dict, Any
 from anycast_ip_collection import get_anycast_ips
 from geo_lite_client import GeoLiteClient
 from ip_info_client import IpinfoClient
@@ -11,9 +12,12 @@ from ripe_measurement_parser import RipeMeasurementParser
 from dotenv import load_dotenv
 
 from services.ripe_atlas_service import RipeAtlasService
+from db.db import check_db_connection, get_db, AsyncSessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 # Import routers
-from apis.routes import measurement_router, probe_router
+from apis.routes import measurement_router, probe_router, anycast_router
 
 load_dotenv()
 logger = setup_logger()
@@ -37,11 +41,12 @@ app.add_middleware(
 # Include routers
 app.include_router(measurement_router)
 app.include_router(probe_router)
+app.include_router(anycast_router)
 
 
 @app.get("/")
 def home():
-    return RedirectResponse(url="/hello")
+    return RedirectResponse(url="/docs")
 
 @app.get("/hello")
 def hello():
@@ -99,3 +104,109 @@ async def get_anycast_ip_details():
     service = RipeAtlasService()
     result = await service.get_anycast_ip_details()
     return {"result": result}
+
+
+# ============================================
+# NEW DATABASE ENDPOINTS
+# ============================================
+
+@app.get("/health/db")
+async def health_check_db() -> Dict[str, Any]:
+    """Check database connection status"""
+    is_connected = await check_db_connection()
+    return {
+        "status": "healthy" if is_connected else "unhealthy",
+        "database": "PostgreSQL",
+        "connected": is_connected
+    }
+
+
+@app.get("/api/db/tables")
+async def get_database_tables(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Get list of all tables in the database"""
+    try:
+        query = text("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            ORDER BY table_name
+        """)
+        result = await session.execute(query)
+        tables = [row[0] for row in result.fetchall()]
+        
+        return {
+            "status": "success",
+            "table_count": len(tables),
+            "tables": tables
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.get("/api/db/stats")
+async def get_database_stats(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Get database statistics including table row counts"""
+    try:
+        query = text("""
+            SELECT 
+                table_name,
+                (xpath('/row/cnt/text()', 
+                    xml_count))[1]::text::int AS row_count
+            FROM (
+                SELECT
+                    table_name,
+                    query_to_xml(format('SELECT count(*) AS cnt FROM %I.%I', 
+                        table_schema, table_name), false, true, '') AS xml_count
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+            ) t
+            ORDER BY row_count DESC
+        """)
+        result = await session.execute(query)
+        stats = [{"table": row[0], "row_count": row[1]} for row in result.fetchall()]
+        
+        total_rows = sum(stat["row_count"] for stat in stats)
+        
+        return {
+            "status": "success",
+            "total_tables": len(stats),
+            "total_rows": total_rows,
+            "tables": stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.post("/api/db/query")
+async def execute_custom_query(query_data: Dict[str, str], session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Execute a custom SQL SELECT query (read-only)"""
+    try:
+        sql_query = query_data.get("query", "").strip()
+        
+        # Security: Only allow SELECT queries
+        if not sql_query.upper().startswith("SELECT"):
+            return {
+                "status": "error",
+                "message": "Only SELECT queries are allowed"
+            }
+        
+        result = await session.execute(text(sql_query))
+        rows = result.fetchall()
+        
+        return {
+            "status": "success",
+            "row_count": len(rows),
+            "data": [dict(row._mapping) for row in rows] if rows else []
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
