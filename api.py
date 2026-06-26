@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 # Import routers
-from apis.routes import measurement_router, probe_router, anycast_router
+from apis.routes import anycast_router, common_router, measurement_router, probe_router
 
 load_dotenv()
 logger = setup_logger()
@@ -42,6 +42,7 @@ app.add_middleware(
 app.include_router(measurement_router)
 app.include_router(probe_router)
 app.include_router(anycast_router)
+app.include_router(common_router)
 
 
 @app.get("/")
